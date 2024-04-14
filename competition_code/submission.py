@@ -6,6 +6,8 @@ Please do not change anything else but fill out the to-do sections.
 from typing import List, Tuple, Dict, Optional
 import roar_py_interface
 import numpy as np
+from mpc import MPCController
+
 
 def normalize_rad(rad : float):
     return (rad + np.pi) % (2 * np.pi) - np.pi
@@ -33,6 +35,7 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
+        self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[0]] for waypoint in maneuverable_waypoints])
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
         self.location_sensor = location_sensor
@@ -44,6 +47,12 @@ class RoarCompetitionSolution:
     async def initialize(self) -> None:
         # TODO: You can do some initial computation here if you want to.
         # For example, you can compute the path to the first waypoint.
+
+        self.MPC = MPCController(
+            dt=0.1,
+            horizon=10,
+            reference_trajectory=self.ref_line
+        )
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
@@ -73,36 +82,17 @@ class RoarCompetitionSolution:
         vehicle_rotation = self.rpy_sensor.get_last_gym_observation()
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
-        
-        # Find the waypoint closest to the vehicle
-        self.current_waypoint_idx = filter_waypoints(
-            vehicle_location,
-            self.current_waypoint_idx,
-            self.maneuverable_waypoints
-        )
-         # We use the 3rd waypoint ahead of the current waypoint as the target waypoint
-        waypoint_to_follow = self.maneuverable_waypoints[(self.current_waypoint_idx + 3) % len(self.maneuverable_waypoints)]
 
-        # Calculate delta vector towards the target waypoint
-        vector_to_waypoint = (waypoint_to_follow.location - vehicle_location)[:2]
-        heading_to_waypoint = np.arctan2(vector_to_waypoint[1],vector_to_waypoint[0])
-
-        # Calculate delta angle towards the target waypoint
-        delta_heading = normalize_rad(heading_to_waypoint - vehicle_rotation[2])
-
-        # Proportional controller to steer the vehicle towards the target waypoint
-        steer_control = (
-            -8.0 / np.sqrt(vehicle_velocity_norm) * delta_heading / np.pi
-        ) if vehicle_velocity_norm > 1e-2 else -np.sign(delta_heading)
-        steer_control = np.clip(steer_control, -1.0, 1.0)
-
-        # Proportional controller to control the vehicle's speed towards 40 m/s
-        throttle_control = 0.05 * (20 - vehicle_velocity_norm)
-
+        state = np.array([vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm])
+        optimal_control = self.MPC.solve_mpc(state)
+        assert optimal_control is not None
+        assert len(optimal_control) == 2
+        assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
+        assert optimal_control[1] <= 1.0 and optimal_control[1] >= -1.0
         control = {
-            "throttle": np.clip(throttle_control, 0.0, 1.0),
-            "steer": steer_control,
-            "brake": np.clip(-throttle_control, 0.0, 1.0),
+            "throttle": np.clip(optimal_control[1], 0.0, 1.0),
+            "steer": np.clip(optimal_control[0], -1.0, 1.0),
+            "brake": np.clip(-optimal_control[1], 0.0, 1.0),
             "hand_brake": 0.0,
             "reverse": 0,
             "target_gear": 0

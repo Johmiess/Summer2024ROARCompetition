@@ -21,20 +21,20 @@ class MPCController:
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
-        self.last_predicted_actuation = np.array([0] * self.horizon * 2)
+        self.last_predicted_actuation = np.array([0,0.8] * self.horizon)
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
 
-    def mpc_cost_function(self, state, control_inputs_vector):
-        control_inputs = np.array([[control_inputs_vector[i], control_inputs_vector[i+1]] for i in range(0, len(control_inputs_vector), 2)])
-        assert control_inputs.shape[0] == self.horizon
-        assert control_inputs.shape[1] == 2
+    def mpc_cost_function(self, initial_state, control_inputs):
+        assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
         # Initialize cost
         total_cost = 0.0
+        state = initial_state.copy()
         
         # Calculate cost for each time step
         for i in range(self.horizon):
+            delta, th = control_inputs[2*i], control_inputs[2*i+1]
             # Compute cross track error (cte) and orientation error (epsi)
             cte, epsi = self.compute_errors(state)
             
@@ -44,20 +44,20 @@ class MPCController:
             cost_cte = self.wt1 * cte**2
             cost_epsi = self.wt2 * epsi**2
             cost_speed = self.wt3 * speed_error**2
-            cost_actuations = self.wt4 * (control_inputs[i, 0]**2 + control_inputs[i, 1]**2)
+            cost_actuations = self.wt4 * (th**2 + delta**2)
             
             if i > 0:
-                cost_steering_rate = self.wt5 * (control_inputs[i, 0] - control_inputs[i-1, 0])**2
-                cost_throttle_rate = self.wt5 * (control_inputs[i, 1] - control_inputs[i-1, 1])**2
+                prev_delta, prev_th = control_inputs[2*(i-1)], control_inputs[2*(i-1)+1]
+                cost_steering_rate = self.wt5 * ((delta - prev_delta) / self.dt)**2
+                cost_throttle_rate = self.wt5 * ((th - prev_th) / self.dt)**2
             else:
                 cost_steering_rate = 0
                 cost_throttle_rate = 0
             
             # Total cost for this time step
             total_cost += cost_cte + cost_epsi + cost_speed + cost_actuations + cost_steering_rate + cost_throttle_rate
-            
             # Update state using bicycle model
-            state = self.update_state(state, control_inputs[i])
+            state = self.update_state(state, [delta, th])
             
         return total_cost
 
@@ -74,12 +74,12 @@ class MPCController:
         next_point = self.ref_line.interpolate(proj + 0.1)
         ref_orientation = np.arctan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
         epsi = self.normalize_angle(orientation - ref_orientation)
-        
+
         return cte, epsi
     
     def update_state(self, state, control_input):
         # Update state using bicycle model
-        delta = control_input[0]*self.max_steering  # Steering angle
+        delta = -control_input[0]*self.max_steering  # Steering angle
         th = control_input[1]  # Throttle/Brake
         a = self.acceleration_from_throttle_and_speed(th, state[3])  # Acceleration
         

@@ -1,11 +1,14 @@
 import unittest
 from mpc import MPCController
 import numpy as np
+import time
+import timeit
 
 class TestMPCController(unittest.TestCase):
     def setUp(self):
         # Create an instance of MPCController for testing
-        self.controller = MPCController()
+        reference_trajectory = np.array([[0, 0], [10, 0], [20, 0], [30, 0], [40, 0], [50, 0], [60, 0], [70, 0], [80, 0], [90, 0]])
+        self.controller = MPCController(reference_trajectory=reference_trajectory)
 
     def test_acceleration_from_throttle_and_speed(self):
         # Test the acceleration_from_throttle_and_speed method
@@ -52,6 +55,40 @@ class TestMPCController(unittest.TestCase):
         expected_optimal_control_input = [0,0]  # Since the initial state is on the reference trajectory
         actual_optimal_control_input = self.controller.solve_mpc(initial_state)
         self.assertAlmostEqual(actual_optimal_control_input, expected_optimal_control_input)
+
+    def test_computation_time(self):
+        # Test the computation time of each method to identify bottlenecks, use timeit module
+        # Test the acceleration_from_throttle_and_speed method
+        throttle = 0.5
+        speed = 20
+        time_acceleration = timeit.timeit(lambda: self.controller.acceleration_from_throttle_and_speed(throttle, speed), number=20)
+
+        # Test the compute_errors method
+        state = [0, 0, 0, 30]
+        time_compute_errors = timeit.timeit(lambda: self.controller.compute_errors(state), number=100)
+
+        # Test the update_state method
+        state = [0, 0, 0, 30]
+        control_input = [0.1, 0.5]
+        time_update_state = timeit.timeit(lambda: self.controller.update_state(state, control_input), number=100)
+
+        # Test the normalize_angle method
+        angle = np.pi + 0.5
+        time_normalize_angle = timeit.timeit(lambda: self.controller.normalize_angle(angle), number=100)
+
+        # Test the solve_mpc method
+        initial_state = [0, 0, 0, 30]
+        time_solve_mpc = timeit.timeit(lambda: self.controller.solve_mpc(initial_state), number=100)
+
+        print(f"acceleration_from_throttle_and_speed: {time_acceleration}")
+        print(f"compute_errors: {time_compute_errors}")
+        print(f"update_state: {time_update_state}")
+        print(f"normalize_angle: {time_normalize_angle}")
+        print(f"solve_mpc: {time_solve_mpc}")
+
+        assert time_acceleration < 1, "acceleration_from_throttle_and_speed method is slow"
+
+
 
 if __name__ == '__main__':
     unittest.main()
