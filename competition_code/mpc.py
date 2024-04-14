@@ -3,7 +3,7 @@ from scipy.optimize import minimize
 from shapely.geometry import LineString, Point
 
 class MPCController:
-    def __init__(self, dt=0.1, horizon=10, reference_trajectory=None):
+    def __init__(self, dt=0.1, horizon=10, reference_trajectory=None, log=False):
         self.dt = dt  # Time step for MPC
         self.horizon = horizon  # MPC horizon
         self.length = 4.5  # Example length of the vehicle
@@ -22,6 +22,8 @@ class MPCController:
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
         self.last_predicted_actuation = np.array([0,0.8] * self.horizon)
+
+        self.log = log
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
@@ -90,14 +92,22 @@ class MPCController:
         
         # Normalize orientation
         state[2] = self.normalize_angle(state[2])
-        
+
+        self.prediction_time += self.dt
+
+        if self.log:
+            #in mpc_log.csv, fill columns "time, prediction_time, predicted_x, predicted_y, predicted_yaw, predicted_speed, predicted_acceleration"
+            with open("mpc_log.csv", "a") as f:
+                f.write(f"{self.current_time}, {self.prediction_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {a}\n")
         return state
     
     def normalize_angle(self, angle):
         # Normalize angle between -pi and pi
         return (angle + np.pi) % (2 * np.pi) - np.pi
     
-    def solve_mpc(self, initial_state):
+    def solve_mpc(self, initial_state, current_time=None):
+        self.current_time = current_time
+        self.prediction_time = current_time 
         # Initial guess for control inputs using the last predicted actuation
         initial_guess = self.last_predicted_actuation
         #bounds are -1 to 1 for both steering and throttle
@@ -105,6 +115,10 @@ class MPCController:
         assert len(initial_guess) == len(bounds), f"Initial guess shape {initial_guess.shape} does not match bounds shape {bounds.shape}"
         result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds)
         optimal_control_inputs = result.x
+
+        if self.log:
+            with open("control_log.txt", "a") as f:
+                f.write(f"{self.current_time}, {optimal_control_inputs}\n")
         
         #return only the first control input
         self.last_predicted_actuation = optimal_control_inputs
