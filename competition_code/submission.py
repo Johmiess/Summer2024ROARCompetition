@@ -49,7 +49,7 @@ class RoarCompetitionSolution:
         # For example, you can compute the path to the first waypoint.
 
         self.MPC = MPCController(
-            dt=0.1,
+            dt=0.05,
             horizon=10,
             reference_trajectory=self.ref_line
         )

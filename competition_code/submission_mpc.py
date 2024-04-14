@@ -49,7 +49,7 @@ class RoarCompetitionSolution:
         # For example, you can compute the path to the first waypoint.
 
         self.MPC = MPCController(
-            dt=0.1,
+            dt=0.05,
             horizon=10,
             reference_trajectory=self.ref_line
         )
@@ -85,11 +85,11 @@ class RoarCompetitionSolution:
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
         
         state = np.array([vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm])
-        optimal_control = self.MPC.solve_mpc(state, t=current_time)
+        optimal_control = self.MPC.solve_mpc(state, current_time=current_time)
         if self.MPC.log:
             #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"
             with open("sim_log.csv", "a") as f:
-                f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[1]}\n")
+                f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[0]}, {optimal_control[1]}\n")
         assert optimal_control is not None
         assert len(optimal_control) == 2
         assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
