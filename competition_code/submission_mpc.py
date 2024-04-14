@@ -35,7 +35,7 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
-        self.ref_line = np.array([[waypoint.location.x, waypoint.location.y, waypoint.roll_pitch_yaw.yaw] for waypoint in maneuverable_waypoints])
+        self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[0]] for waypoint in maneuverable_waypoints])
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
         self.location_sensor = location_sensor
