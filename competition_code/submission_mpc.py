@@ -84,7 +84,7 @@ class RoarCompetitionSolution:
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
 
         state = np.array([vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm])
-        optimal_control = self.MPC.solve(state)
+        optimal_control = self.MPC.solve_mpc(state)
         assert optimal_control is not None
         assert len(optimal_control) == 2
         assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
