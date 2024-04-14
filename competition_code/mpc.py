@@ -6,8 +6,8 @@ class MPCController:
     def __init__(self, dt=0.1, horizon=10, reference_trajectory=None, log=False):
         self.dt = dt  # Time step for MPC
         self.horizon = horizon  # MPC horizon
-        self.length = 4.5  # Example length of the vehicle
-        self.target_speed = 40  # Reference speed
+        self.length = 3.0  # Example length of the vehicle
+        self.target_speed = 30  # Reference speed
         self.wt1 = 100  # Weight for cte
         self.wt2 = 100  # Weight for epsi
         self.wt3 = 1  # Weight for speed error
@@ -95,10 +95,6 @@ class MPCController:
 
         self.prediction_time += self.dt
 
-        if self.log:
-            #in mpc_log.csv, fill columns "time, prediction_time, predicted_x, predicted_y, predicted_yaw, predicted_speed, predicted_acceleration"
-            with open("mpc_log.csv", "a") as f:
-                f.write(f"{self.current_time}, {self.prediction_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {a}\n")
         return state
     
     def normalize_angle(self, angle):
@@ -117,9 +113,10 @@ class MPCController:
         optimal_control_inputs = result.x
 
         if self.log:
-            with open("control_log.txt", "a") as f:
-                f.write(f"{self.current_time}, {optimal_control_inputs}\n")
-        
+            with open("control_log.csv", "a") as f:
+                for i in range(len(optimal_control_inputs)//2):
+                    f.write(f"{self.current_time}, {self.current_time+(i+1)*self.dt}, {optimal_control_inputs[2*i]}, {optimal_control_inputs[2*i+1]}\n")
+
         #return only the first control input
         self.last_predicted_actuation = optimal_control_inputs
         return [optimal_control_inputs[0], optimal_control_inputs[1]]
