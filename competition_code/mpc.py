@@ -29,6 +29,7 @@ class MPCController:
         # Define CasADi symbols and optimization problem 
         self.x = ca.MX.sym('x', 2 * self.horizon)
         self.opti = ca.Opti()
+        self.initial_state = [0, 0, 0, 0]
         self.opti.minimize(self.mpc_cost_function(self.x))
         
         # Bounds for control inputs
@@ -43,15 +44,13 @@ class MPCController:
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
 
     def mpc_cost_function(self, control_inputs):
-        assert control_inputs.shape[0] == 2 * self.horizon, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
-        # Initialize cost
         total_cost = 0.0
         state = self.initial_state.copy()
         
         # Calculate cost for each time step
         for i in range(self.horizon):
-            delta, th = control_inputs[2*i], control_inputs[2*i+1]
-            # Compute cross track error (cte) and orientation error (epsi)
+            delta = ca.vertsplit(control_inputs)[2*i]
+            th = ca.vertsplit(control_inputs)[2*i+1]
             cte, epsi = self.compute_errors(state)
             
             speed_error = state[3] - self.target_speed  # Speed error
@@ -63,7 +62,8 @@ class MPCController:
             cost_actuations = self.wt4 * (th**2 + delta**2)
             
             if i > 0:
-                prev_delta, prev_th = control_inputs[2*(i-1)], control_inputs[2*(i-1)+1]
+                prev_delta = ca.vertsplit(control_inputs)[2*(i-1)]
+                prev_th = ca.vertsplit(control_inputs)[2*(i-1)+1]
                 cost_steering_rate = self.wt5 * ((delta - prev_delta) / self.dt)**2
                 cost_throttle_rate = self.wt5 * ((th - prev_th) / self.dt)**2
             else:
@@ -83,12 +83,12 @@ class MPCController:
         point = Point(x, y)
         proj = self.ref_line.project(point)
         closest_point = self.ref_line.interpolate(proj)
-        cte = np.linalg.norm([x - closest_point.x, y - closest_point.y])
+        cte = ca.norm_2(ca.vertcat(x - closest_point.x, y - closest_point.y))
 
         # Compute orientation error by finding the angle between the vehicle orientation and the trajectory
         orientation = state[2]
         next_point = self.ref_line.interpolate(proj + 0.1)
-        ref_orientation = np.arctan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
+        ref_orientation = ca.atan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
         epsi = self.normalize_angle(orientation - ref_orientation)
 
         return cte, epsi
@@ -99,9 +99,9 @@ class MPCController:
         th = control_input[1]  # Throttle/Brake
         a = self.acceleration_from_throttle_and_speed(th, state[3])  # Acceleration
         
-        state[0] += state[3] * np.cos(state[2]) * self.dt
-        state[1] += state[3] * np.sin(state[2]) * self.dt
-        state[2] += state[3] / self.length * np.tan(delta) * self.dt
+        state[0] += state[3] * ca.cos(state[2]) * self.dt
+        state[1] += state[3] * ca.sin(state[2]) * self.dt
+        state[2] += state[3] / self.length * ca.tan(delta) * self.dt
         state[3] += a * self.dt
         
         # Normalize orientation
@@ -113,7 +113,7 @@ class MPCController:
     
     def normalize_angle(self, angle):
         # Normalize angle between -pi and pi
-        return (angle + np.pi) % (2 * np.pi) - np.pi
+        return ca.fmod(angle + np.pi, 2 * np.pi) - np.pi
     
     def solve_mpc(self, initial_state, current_time=None):
         self.current_time = current_time
