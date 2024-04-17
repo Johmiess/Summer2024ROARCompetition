@@ -43,7 +43,7 @@ class MPCController:
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
 
     def mpc_cost_function(self, control_inputs):
-        assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
+        assert control_inputs.shape[0] == 2 * self.horizon, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
         # Initialize cost
         total_cost = 0.0
         state = self.initial_state.copy()
@@ -200,7 +200,7 @@ class MPCShadowController:
         
 
     def mpc_cost_function(self, control_inputs):
-        assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
+        assert control_inputs.shape[0] == 2 * self.horizon, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
         # Initialize cost
         total_cost = 0.0
         state = self.initial_state.copy()
