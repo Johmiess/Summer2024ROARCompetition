@@ -1,7 +1,7 @@
 import numpy as np
+from scipy.optimize import minimize
 from shapely.geometry import LineString, Point
 import bisect
-import casadi as ca
 
 class MPCController:
     def __init__(self, dt=0.05, horizon=10, reference_trajectory=None, log=False):
@@ -25,32 +25,20 @@ class MPCController:
         self.last_predicted_actuation = np.array([0,0.8] * self.horizon)
 
         self.log = log
-
-        # Define CasADi symbols and optimization problem 
-        self.x = ca.MX.sym('x', 2 * self.horizon)
-        self.opti = ca.Opti()
-        self.initial_state = [0, 0, 0, 0]
-        self.opti.minimize(self.mpc_cost_function(self.x))
-        
-        # Bounds for control inputs
-        self.bounds = np.array([(-1, 1)] * self.horizon * 2)
-        self.opti.subject_to(self.bounds[:, 0] <= self.x)
-        self.opti.subject_to(self.x <= self.bounds[:, 1])
-        
-        # Initial guess
-        self.opti.set_initial(self.x, self.last_predicted_actuation)
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
 
-    def mpc_cost_function(self, control_inputs):
+    def mpc_cost_function(self, initial_state, control_inputs):
+        assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
+        # Initialize cost
         total_cost = 0.0
-        state = self.initial_state.copy()
+        state = initial_state.copy()
         
         # Calculate cost for each time step
         for i in range(self.horizon):
-            delta = ca.vertsplit(control_inputs)[2*i]
-            th = ca.vertsplit(control_inputs)[2*i+1]
+            delta, th = control_inputs[2*i], control_inputs[2*i+1]
+            # Compute cross track error (cte) and orientation error (epsi)
             cte, epsi = self.compute_errors(state)
             
             speed_error = state[3] - self.target_speed  # Speed error
@@ -62,8 +50,7 @@ class MPCController:
             cost_actuations = self.wt4 * (th**2 + delta**2)
             
             if i > 0:
-                prev_delta = ca.vertsplit(control_inputs)[2*(i-1)]
-                prev_th = ca.vertsplit(control_inputs)[2*(i-1)+1]
+                prev_delta, prev_th = control_inputs[2*(i-1)], control_inputs[2*(i-1)+1]
                 cost_steering_rate = self.wt5 * ((delta - prev_delta) / self.dt)**2
                 cost_throttle_rate = self.wt5 * ((th - prev_th) / self.dt)**2
             else:
@@ -83,12 +70,12 @@ class MPCController:
         point = Point(x, y)
         proj = self.ref_line.project(point)
         closest_point = self.ref_line.interpolate(proj)
-        cte = ca.norm_2(ca.vertcat(x - closest_point.x, y - closest_point.y))
+        cte = np.linalg.norm([x - closest_point.x, y - closest_point.y])
 
         # Compute orientation error by finding the angle between the vehicle orientation and the trajectory
         orientation = state[2]
         next_point = self.ref_line.interpolate(proj + 0.1)
-        ref_orientation = ca.atan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
+        ref_orientation = np.arctan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
         epsi = self.normalize_angle(orientation - ref_orientation)
 
         return cte, epsi
@@ -99,9 +86,9 @@ class MPCController:
         th = control_input[1]  # Throttle/Brake
         a = self.acceleration_from_throttle_and_speed(th, state[3])  # Acceleration
         
-        state[0] += state[3] * ca.cos(state[2]) * self.dt
-        state[1] += state[3] * ca.sin(state[2]) * self.dt
-        state[2] += state[3] / self.length * ca.tan(delta) * self.dt
+        state[0] += state[3] * np.cos(state[2]) * self.dt
+        state[1] += state[3] * np.sin(state[2]) * self.dt
+        state[2] += state[3] / self.length * np.tan(delta) * self.dt
         state[3] += a * self.dt
         
         # Normalize orientation
@@ -113,7 +100,7 @@ class MPCController:
     
     def normalize_angle(self, angle):
         # Normalize angle between -pi and pi
-        return ca.fmod(angle + np.pi, 2 * np.pi) - np.pi
+        return (angle + np.pi) % (2 * np.pi) - np.pi
     
     def solve_mpc(self, initial_state, current_time=None):
         self.current_time = current_time
@@ -123,12 +110,8 @@ class MPCController:
         #bounds are -1 to 1 for both steering and throttle
         bounds = np.array([(-1, 1)] * self.horizon * 2)
         assert len(initial_guess) == len(bounds), f"Initial guess shape {initial_guess.shape} does not match bounds shape {bounds.shape}"
-        # Define CasADi symbols
-        self.initial_state = initial_state
-        self.opti.set_value(self.x, initial_guess)
-        # Solve the optimization problem
-        sol = self.opti.solve()
-        optimal_control_inputs = sol.value(self.x)
+        result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds)
+        optimal_control_inputs = result.x
 
         if self.log:
             with open("control_log.csv", "a") as f:
@@ -151,33 +134,20 @@ class MPCShadowController:
         self.wt5 = 10  # Weight for actuation rate of change
         self.reference_line = reference_line
         self.ref_line = LineString(reference_line)
-        self.shadow = shadow # 2D array with [time, progress] for shadow trajectory
+        self.shadow = shadow # 2D array with [time, progress] for shadow trajectory, time should start from 0
         self.start_time = start_time
         self.lap = 1
         self.n_laps = 3
+        self.prev_progress = 0
 
         self.max_acceleration = 4.0  # Maximum acceleration
         self.acc_speed_intercept = -0.04
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
-        self.last_predicted_actuation = np.array([0, 0.8] * self.horizon)
+        self.last_predicted_actuation = np.array([0,0.8] * self.horizon)
 
         self.log = log
-        
-        # Define CasADi symbols and optimization problem
-        self.x = ca.MX.sym('x', 2 * self.horizon)
-        self.opti = ca.Opti()
-        self.opti.minimize(self.mpc_cost_function(self.x))
-        
-        # Bounds for control inputs
-        self.bounds = np.array([(-1, 1)] * self.horizon * 2)
-        self.opti.subject_to(self.bounds[:, 0] <= self.x)
-        self.opti.subject_to(self.x <= self.bounds[:, 1])
-        
-        # Initial guess
-        self.opti.set_initial(self.x, self.last_predicted_actuation)
-
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
@@ -186,24 +156,26 @@ class MPCShadowController:
         # Find the closest point on the reference trajectory to the vehicle
         x, y = state[0], state[1]
         point = Point(x, y)
-        proj = self.ref_line.project(point)
-        closest_point = self.ref_line.interpolate(proj)
-        progress_lap = proj / self.ref_line.length
+        progress_lap = self.ref_line.project(point, normalized=True)
+        if progress_lap <0.1 and self.prev_progress > 0.9:
+            self.lap += 1
+        self.prev_progress = progress_lap
         progress = (progress_lap + self.lap - 1) / self.n_laps
 
         # Find idx of the shadow trajectory that is closest to the current time
-        idx = bisect.bisect_left(self.shadow[:, 0], self.prediction_time)
-        shadow_progress = (self.shadow[idx][1] + self.shadow[idx+1][1]) / 2
+        elapsed_time = self.prediction_time - self.start_time + 10 # Add 10 seconds ahead as objective is to be ahead of the shadow trajectory
+        idx = bisect.bisect_left(self.shadow[:, 0], elapsed_time)
+        shadow_progress = self.shadow[idx][1]
         target_progress = shadow_progress * 1.01  # 1% ahead of the shadow trajectory
 
         return progress - target_progress
         
 
-    def mpc_cost_function(self, control_inputs):
-        assert control_inputs.shape[0] == 2 * self.horizon, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
+    def mpc_cost_function(self, initial_state, control_inputs):
+        assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
         # Initialize cost
         total_cost = 0.0
-        state = self.initial_state.copy()
+        state = initial_state.copy()
         
         # Calculate cost for each time step
         for i in range(self.horizon):
@@ -281,12 +253,8 @@ class MPCShadowController:
         #bounds are -1 to 1 for both steering and throttle
         bounds = np.array([(-1, 1)] * self.horizon * 2)
         assert len(initial_guess) == len(bounds), f"Initial guess shape {initial_guess.shape} does not match bounds shape {bounds.shape}"
-        # Define CasADi symbols
-        self.initial_state = initial_state
-        self.opti.set_value(self.x, initial_guess)
-        # Solve the optimization problem
-        sol = self.opti.solve()
-        optimal_control_inputs = sol.value(self.x)
+        result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds)
+        optimal_control_inputs = result.x
 
         if self.log:
             with open("control_log.csv", "a") as f:
@@ -296,4 +264,3 @@ class MPCShadowController:
         #return only the first control input
         self.last_predicted_actuation = optimal_control_inputs
         return [optimal_control_inputs[0], optimal_control_inputs[1]]
-
