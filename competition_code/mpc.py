@@ -2,6 +2,7 @@ import numpy as np
 from scipy.optimize import minimize
 from shapely.geometry import LineString, Point
 import bisect
+import timeit
 
 class MPCController:
     def __init__(self, dt=0.05, horizon=10, reference_trajectory=None, log=False):
@@ -123,17 +124,17 @@ class MPCController:
         return [optimal_control_inputs[0], optimal_control_inputs[1]]
 
 class MPCShadowController:
-    def __init__(self, dt=0.05, horizon=10, reference_line=None, shadow=None, start_time=0, log=False):
+    def __init__(self, dt=0.05, horizon=10, reference_trajectory=None, shadow=None, start_time=0, log=False):
         self.dt = dt  # Time step for MPC
         self.horizon = horizon  # MPC horizon
         self.length = 3.0  # Example length of the vehicle
         self.wt1 = 100  # Weight for cte
         self.wt2 = 100  # Weight for epsi
-        self.wt3 = 100  # Weight for diff with shadow progress error
+        self.wt3 = 1  # Weight for diff with shadow progress error
         self.wt4 = 1  # Weight for actuations
         self.wt5 = 10  # Weight for actuation rate of change
-        self.reference_line = reference_line
-        self.ref_line = LineString(reference_line)
+        self.reference_line = reference_trajectory
+        self.ref_line = LineString(reference_trajectory)
         self.shadow = shadow # 2D array with [time, progress] for shadow trajectory, time should start from 0
         self.start_time = start_time
         self.lap = 1
@@ -145,7 +146,7 @@ class MPCShadowController:
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
-        self.last_predicted_actuation = np.array([0,0.8] * self.horizon)
+        self.last_predicted_actuation = np.array([0,0.9] * self.horizon)
 
         self.log = log
     
@@ -165,13 +166,15 @@ class MPCShadowController:
         # Find idx of the shadow trajectory that is closest to the current time
         elapsed_time = self.prediction_time - self.start_time + 10 # Add 10 seconds ahead as objective is to be ahead of the shadow trajectory
         idx = bisect.bisect_left(self.shadow[:, 0], elapsed_time)
+        if idx == len(self.shadow):
+            idx -= 1
         shadow_progress = self.shadow[idx][1]
         target_progress = shadow_progress * 1.01  # 1% ahead of the shadow trajectory
+        diff = target_progress - progress
+        return diff * 10 if diff > 0 else diff
 
-        return progress - target_progress
-        
-
-    def mpc_cost_function(self, initial_state, control_inputs):
+    def mpc_cost_function(self, initial_state, control_inputs, log=False):
+        self.count_called += 1
         assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
         # Initialize cost
         total_cost = 0.0
@@ -182,7 +185,7 @@ class MPCShadowController:
             delta, th = control_inputs[2*i], control_inputs[2*i+1]
             # Compute cross track error (cte) and orientation error (epsi)
             cte, epsi = self.compute_errors(state)
-            
+
             # Compute shadow progress error
             shadow_progress_error = self.compute_shadow_progress_error(state)
             
@@ -191,6 +194,9 @@ class MPCShadowController:
             cost_epsi = self.wt2 * epsi**2
             cost_shadow = self.wt3 * shadow_progress_error**2
             cost_actuations = self.wt4 * (th**2 + delta**2)
+            #cost that increase very fast if th not 1 and speed is low
+            # if th < 1:
+            #     cost_actuations += 1000 * (1-np.exp(-10*(1-th)/np.exp(state[3]/2)))
             
             if i > 0:
                 prev_delta, prev_th = control_inputs[2*(i-1)], control_inputs[2*(i-1)+1]
@@ -200,11 +206,15 @@ class MPCShadowController:
                 cost_steering_rate = 0
                 cost_throttle_rate = 0
             
+            if log:
+                print(f"Costs for step {i}: cte={cost_cte}, epsi={cost_epsi}, shadow_progress_error={cost_shadow}, actuations={cost_actuations}, steering_rate={cost_steering_rate}, throttle_rate={cost_throttle_rate}")
             # Total cost for this time step
             total_cost += cost_cte + cost_epsi + cost_shadow + cost_actuations + cost_steering_rate + cost_throttle_rate
             # Update state using bicycle model
             state = self.update_state(state, [delta, th])
-            
+        
+        if log:
+            print(f"Total cost: {total_cost}")
         return total_cost
 
     def compute_errors(self, state):
@@ -247,14 +257,19 @@ class MPCShadowController:
     
     def solve_mpc(self, initial_state, current_time=None):
         self.current_time = current_time
+        if self.start_time == 0 and current_time > 0.1:
+            self.start_time = current_time
         self.prediction_time = current_time 
         # Initial guess for control inputs using the last predicted actuation
         initial_guess = self.last_predicted_actuation
         #bounds are -1 to 1 for both steering and throttle
         bounds = np.array([(-1, 1)] * self.horizon * 2)
         assert len(initial_guess) == len(bounds), f"Initial guess shape {initial_guess.shape} does not match bounds shape {bounds.shape}"
-        result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds)
+        self.count_called = 0
+        result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds, options={'disp': False}, method='Powell')
         optimal_control_inputs = result.x
+        # print("Calls to cost function:", self.count_called)
+        # print("costs:", self.mpc_cost_function(initial_state, optimal_control_inputs, log=True))
 
         if self.log:
             with open("control_log.csv", "a") as f:
@@ -263,4 +278,5 @@ class MPCShadowController:
 
         #return only the first control input
         self.last_predicted_actuation = optimal_control_inputs
+        # print(f"Optimal control inputs used: {optimal_control_inputs[0], optimal_control_inputs[1]}")
         return [optimal_control_inputs[0], optimal_control_inputs[1]]
