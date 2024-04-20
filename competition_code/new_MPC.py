@@ -21,6 +21,9 @@ class State:
         self.yaw_angle = yaw_angle
         self.yaw_rate = yaw_rate
         self.slip_angle = slip_angle
+
+    def __str__(self):
+        return f"State(x={self.x}, y={self.y}, steering_angle={self.steering_angle}, velocity={self.velocity}, yaw_angle={self.yaw_angle}, yaw_rate={self.yaw_rate}, slip_angle={self.slip_angle})"
     
     def to_list(self):
         return [self.x, self.y, self.steering_angle, self.velocity, self.yaw_angle, self.yaw_rate, self.slip_angle]
@@ -78,10 +81,12 @@ class MPCController:
         # Initialize cost
         total_cost = 0.0
         # Initialize state
-        yaw_rate = (initial_state[2]-self.prev_yaw)/self.dt
-        speed_vector = [initial_state[0]-self.prev_x, initial_state[1]-self.prev_y]
-        speed_vector /= np.linalg.norm(speed_vector)
-        slip_angle = np.arctan2(speed_vector[1], speed_vector[0]) - initial_state[2]
+        diff_angle = (initial_state.yaw_angle -self.prev_yaw)
+        diff_angle = self.normalize_angle(diff_angle)
+        yaw_rate = diff_angle/self.dt
+        speed_vector = [initial_state.x - self.prev_x, initial_state.y - self.prev_y]
+        speed_vector /= (np.linalg.norm(speed_vector) + 1e-6)
+        slip_angle = np.arctan2(speed_vector[1], speed_vector[0]) - initial_state.yaw_angle
         slip_angle = self.normalize_angle(slip_angle)
         steering_angle = control_inputs[0]*self.max_steering
         state = State(x=initial_state.x, y=initial_state.y, steering_angle=steering_angle, velocity=initial_state.velocity, yaw_angle=initial_state.yaw_angle, yaw_rate=yaw_rate, slip_angle=slip_angle)
@@ -148,13 +153,17 @@ class MPCController:
         t = [0, self.dt]
         u = [0, a]
         
-        pred = odeint(func_ST, x0_ST, t, args=(u, self.p))
+        #pred = odeint(func_ST, x0_ST, t, args=(u, self.p))
+
+        deriv = vehicle_dynamics_st(x0_ST, u, self.p) # Manual integration
+        pred = np.array(x0_ST) + np.array(deriv) * self.dt
 
         self.prev_x, self.prev_y, self.prev_yaw = state.x, state.y, state.yaw_angle
 
-        state = State(x=pred[-1, 0], y=pred[-1, 1], steering_angle=delta, velocity=pred[-1, 3], yaw_angle=pred[-1, 4], yaw_rate=pred[-1, 5], slip_angle=pred[-1, 6])
-
+        #state = State(x=pred[-1, 0], y=pred[-1, 1], steering_angle=steering_angle, velocity=pred[-1, 3], yaw_angle=pred[-1, 4], yaw_rate=pred[-1, 5], slip_angle=pred[-1, 6])
+        state = State(x=pred[0], y=pred[1], steering_angle=steering_angle, velocity=pred[3], yaw_angle=pred[4], yaw_rate=pred[5], slip_angle=pred[6])
         state.yaw_angle = self.normalize_angle(state.yaw_angle)
+        state.slip_angle = self.normalize_angle(state.slip_angle)
         self.prediction_time += self.dt
 
         return state
