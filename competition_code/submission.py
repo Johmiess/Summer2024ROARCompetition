@@ -6,7 +6,7 @@ Please do not change anything else but fill out the to-do sections.
 from typing import List, Tuple, Dict, Optional
 import roar_py_interface
 import numpy as np
-from mpc import MPCController
+from new_MPC import MPCController, State
 
 
 def normalize_rad(rad : float):
@@ -35,7 +35,8 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
-        self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[0]] for waypoint in maneuverable_waypoints])
+        #self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[0]] for waypoint in maneuverable_waypoints])
+        traj = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
         self.location_sensor = location_sensor
@@ -51,13 +52,16 @@ class RoarCompetitionSolution:
         self.MPC = MPCController(
             dt=0.05,
             horizon=10,
-            reference_trajectory=self.ref_line
+            reference_trajectory=self.ref_line,
+            log=False
         )
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
         vehicle_rotation = self.rpy_sensor.get_last_gym_observation()
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
+
+        self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
 
         self.current_waypoint_idx = 10
         self.current_waypoint_idx = filter_waypoints(
@@ -84,7 +88,15 @@ class RoarCompetitionSolution:
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
         
-        state = np.array([vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm])
+        slip_angle = np.arctan2(vehicle_velocity[1], vehicle_velocity[0]) - vehicle_rotation[2]
+        slip_angle = normalize_rad(slip_angle)
+        state = State(x=vehicle_location[0],
+                        y=vehicle_location[1],
+                        steering_angle=0,
+                        velocity=vehicle_velocity_norm,
+                        yaw_angle=vehicle_rotation[2],
+                        yaw_rate=0, #will be calculated in mpc
+                        slip_angle=slip_angle)
         optimal_control = self.MPC.solve_mpc(state, current_time=current_time)
         if self.MPC.log:
             #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"

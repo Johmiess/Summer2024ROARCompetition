@@ -19,7 +19,7 @@ class MPCController:
         self.ref_line = LineString(self.reference_trajectory[:, :2])
 
         self.max_acceleration = 4.0  # Maximum acceleration
-        self.acc_speed_intercept = -0.04
+        self.acc_speed_intercept = 0.04
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
@@ -28,7 +28,8 @@ class MPCController:
         self.log = log
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
-        return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
+        return throttle * self.max_acceleration
+        #return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
 
     def mpc_cost_function(self, initial_state, control_inputs):
         assert len(control_inputs) == self.horizon * 2, f"Control inputs shape {control_inputs.shape} does not match horizon {self.horizon}"
@@ -142,7 +143,7 @@ class MPCShadowController:
         self.prev_progress = 0
 
         self.max_acceleration = 4.0  # Maximum acceleration
-        self.acc_speed_intercept = -0.04
+        self.acc_speed_intercept = 0.04
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
@@ -151,6 +152,7 @@ class MPCShadowController:
         self.log = log
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
+        return throttle * self.max_acceleration
         return throttle * self.max_acceleration * (1 - self.acc_speed_intercept * speed)
     
     def compute_shadow_progress_error(self, state):
