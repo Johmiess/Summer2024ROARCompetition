@@ -35,8 +35,8 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
-        #self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[0]] for waypoint in maneuverable_waypoints])
-        traj = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
+        #self.ref_line = np.array([[i,waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[2], 0, 25, 0] for i,waypoint in enumerate(maneuverable_waypoints)])
+        self.ref_line = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
         self.location_sensor = location_sensor
@@ -62,6 +62,7 @@ class RoarCompetitionSolution:
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
 
         self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
+        print("Initial x, y, yaw:", self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw)
 
         self.current_waypoint_idx = 10
         self.current_waypoint_idx = filter_waypoints(
@@ -81,6 +82,7 @@ class RoarCompetitionSolution:
         You can do whatever you want here, including apply_action() to the vehicle.
         """
         # TODO: Implement your solution here.
+        print("Current time:", current_time)
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
@@ -97,11 +99,13 @@ class RoarCompetitionSolution:
                         yaw_angle=vehicle_rotation[2],
                         yaw_rate=0, #will be calculated in mpc
                         slip_angle=slip_angle)
+        #print("State:", state)
         optimal_control = self.MPC.solve_mpc(state, current_time=current_time)
-        if self.MPC.log:
-            #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"
-            with open("sim_log.csv", "a") as f:
-                f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[0]}, {optimal_control[1]}\n")
+        #print("Optimal control:", optimal_control)
+        # if self.MPC.log:
+        #     #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"
+        #     with open("sim_log.csv", "a") as f:
+        #         f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[0]}, {optimal_control[1]}\n")
         assert optimal_control is not None
         assert len(optimal_control) == 2
         assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
