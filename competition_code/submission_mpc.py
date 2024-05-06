@@ -6,7 +6,7 @@ Please do not change anything else but fill out the to-do sections.
 from typing import List, Tuple, Dict, Optional
 import roar_py_interface
 import numpy as np
-from new_MPC import MPCController, State
+from mpc import MPCController, State
 
 
 def normalize_rad(rad : float):
