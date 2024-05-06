@@ -35,7 +35,7 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
-        self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[2]] for i,waypoint in enumerate(maneuverable_waypoints)])
+        self.ref_line = np.array([[i,waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[2], 0, 25, 0] for i,waypoint in enumerate(maneuverable_waypoints)])
         # self.ref_line = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
