@@ -6,7 +6,7 @@ Please do not change anything else but fill out the to-do sections.
 from typing import List, Tuple, Dict, Optional
 import roar_py_interface
 import numpy as np
-from mpc import MPCController
+from new_MPC import MPCController, State
 
 
 def normalize_rad(rad : float):
@@ -58,9 +58,10 @@ class RoarCompetitionSolution:
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
+        vehicle_rotation = self.rpy_sensor.get_last_gym_observation()
 
-        # self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
-        # print("Initial x, y, yaw:", self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw)
+        self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
+        print("Initial x, y, yaw:", self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw)
 
         self.current_waypoint_idx = 10
         self.current_waypoint_idx = filter_waypoints(
@@ -87,7 +88,15 @@ class RoarCompetitionSolution:
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
         
-        state = [vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm]
+        slip_angle = np.arctan2(vehicle_velocity[1], vehicle_velocity[0]) - vehicle_rotation[2]
+        slip_angle = normalize_rad(slip_angle)
+        state = State(x=vehicle_location[0],
+                        y=vehicle_location[1],
+                        steering_angle=0,
+                        velocity=vehicle_velocity_norm,
+                        yaw_angle=vehicle_rotation[2],
+                        yaw_rate=0, #will be calculated in mpc
+                        slip_angle=slip_angle)
         optimal_control = self.MPC.solve_mpc(state, current_time=self.current_time)
         assert optimal_control is not None
         assert len(optimal_control) == 2
