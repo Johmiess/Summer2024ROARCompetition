@@ -52,15 +52,12 @@ class RoarCompetitionSolution:
         self.MPC = MPCController(
             dt=0.05,
             horizon=10,
-            reference_trajectory=self.ref_line,
-            log=False
+            reference_trajectory=self.ref_line
         )
         self.current_time = 0
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
-        vehicle_rotation = self.rpy_sensor.get_last_gym_observation()
-        vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
 
         # self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
         # print("Initial x, y, yaw:", self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw)
@@ -72,23 +69,17 @@ class RoarCompetitionSolution:
             self.maneuverable_waypoints
         )
 
+        self.current_time = 0
+
 
     async def step(
         self,
-        current_time = None,
     ) -> None:
         """
         This function is called every world step.
         Note: You should not call receive_observation() on any sensor here, instead use get_last_observation() to get the last received observation.
         You can do whatever you want here, including apply_action() to the vehicle.
         """
-        # TODO: Implement your solution here.
-        if current_time is not None:
-            self.current_time = current_time
-        else:
-            self.current_time += 0.05
-            current_time = self.current_time
-        print("Current time:", current_time)
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
@@ -97,13 +88,7 @@ class RoarCompetitionSolution:
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
         
         state = [vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm]
-        optimal_control = self.MPC.solve_mpc(state, current_time=current_time)
-        print("Optimal control:", optimal_control)
-        #print("Optimal control:", optimal_control)
-        # if self.MPC.log:
-        #     #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"
-        #     with open("sim_log.csv", "a") as f:
-        #         f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[0]}, {optimal_control[1]}\n")
+        optimal_control = self.MPC.solve_mpc(state, current_time=self.current_time)
         assert optimal_control is not None
         assert len(optimal_control) == 2
         assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
@@ -117,4 +102,5 @@ class RoarCompetitionSolution:
             "target_gear": 0
         }
         await self.vehicle.apply_action(control)
+        self.current_time += 0.05
         return control

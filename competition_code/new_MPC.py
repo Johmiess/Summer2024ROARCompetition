@@ -29,7 +29,7 @@ class State:
         return [self.x, self.y, self.steering_angle, self.velocity, self.yaw_angle, self.yaw_rate, self.slip_angle]
 
 class MPCController:
-    def __init__(self, dt=0.05, horizon=10, reference_trajectory=None, log=False):
+    def __init__(self, dt=0.05, horizon=10, reference_trajectory=None):
         self.dt = dt  # Time step for MPC
         self.horizon = horizon  # MPC horizon
         self.p = parameters_vehicle1()  # Vehicle parameters
@@ -49,31 +49,21 @@ class MPCController:
         #reference trajectory is # s_m; x_m; y_m; psi_rad; kappa_radpm; vx_mps; ax_mps2
         self.reference_trajectory = reference_trajectory if reference_trajectory is not None else np.zeros((horizon, 7))
         self.ref_line = LineString(self.reference_trajectory[:, 1:3])
-        self.max_acceleration = 4.0  # Maximum acceleration
-        self.acc_speed_intercept = -0.04
+        self.max_acceleration = 4.3  # Maximum acceleration
+        self.acc_speed_intercept = 0.037
 
         self.max_steering = 70 * np.pi / 180  # Maximum steering angle
 
         self.last_predicted_actuation = np.array([0,0.9] * self.horizon)
 
-        self.log = log
-
         self.prev_x, self.prev_y, self.prev_yaw = 0, 0, 0
         self.prev_delta, self.prev_th = 0, 0
     
     def acceleration_from_throttle_and_speed(self, throttle, speed):
-        return self.max_acceleration * throttle #TODO: Implement a more realistic acceleration model
+        return throttle * (self.max_acceleration - self.acc_speed_intercept*speed)
 
     def steering_from_delta_and_speed(self, delta, speed):
         return -delta*self.max_steering
-        if speed < 20:
-            return delta*self.max_steering
-        elif speed < 60:
-            return min(delta, 0.9)*self.max_steering
-        elif speed < 120:
-            return min(delta, 0.8)*self.max_steering
-        else:
-            return min(delta, 0.7)*self.max_steering
 
 
     def mpc_cost_function(self, initial_state, control_inputs):
@@ -84,11 +74,6 @@ class MPCController:
         diff_angle = (initial_state.yaw_angle -self.prev_yaw)
         diff_angle = self.normalize_angle(diff_angle)
         yaw_rate = diff_angle/self.dt
-        if self.log:
-            print("prev_yaw", self.prev_yaw)
-            print("initial_state.yaw_angle", initial_state.yaw_angle)
-            print("diff_angle", diff_angle)
-            print("yaw_rate", yaw_rate)
         speed_vector = [initial_state.x - self.prev_x, initial_state.y - self.prev_y]
         norm = np.linalg.norm(speed_vector)
         if norm<1e-3:
@@ -121,9 +106,6 @@ class MPCController:
             
             # Total cost for this time step
             total_cost += cost_cte + cost_epsi + cost_speed + cost_actuations + cost_steering_rate + cost_throttle_rate
-            if self.log:
-                print(f"Costs: cost_cte: {cost_cte}, cost_epsi: {cost_epsi}, cost_speed: {cost_speed}, cost_actuations: {cost_actuations}, cost_steering_rate: {cost_steering_rate}, cost_throttle_rate: {cost_throttle_rate}")
-                print(' ')
             # Update state using bicycle model
             state = self.update_state(state, [delta, th])
             
@@ -136,20 +118,12 @@ class MPCController:
         proj = self.ref_line.project(point)
         closest_point = self.ref_line.interpolate(proj)
         cte = np.linalg.norm([x - closest_point.x, y - closest_point.y])
-        if self.log:
-            print("state inside", state)
-            print("distance to ref line", cte)
-            print("direction to ref line", np.arctan2(y - closest_point.y, x - closest_point.x) - state.yaw_angle)
 
         # Compute orientation error by finding the angle between the vehicle orientation and the trajectory
         orientation = state.yaw_angle
         next_point = self.ref_line.interpolate(proj + 0.1)
         ref_orientation = np.arctan2(next_point.y - closest_point.y, next_point.x - closest_point.x)
         epsi = self.normalize_angle(orientation - ref_orientation)
-        if self.log:
-            print("orientation", orientation)
-            print("ref_orientation", ref_orientation)
-            print("epsi", epsi)
 
         # Compute speed error
         idx_interpolated = bisect.bisect_left(self.reference_trajectory[:, 0], proj)
@@ -157,8 +131,6 @@ class MPCController:
         interpolated_speed = (1-alpha)*self.reference_trajectory[idx_interpolated-1, 5] + alpha*self.reference_trajectory[idx_interpolated, 5]
 
         speed_error = interpolated_speed - state.velocity
-        if self.log:
-            print(f"Speed error: {speed_error}")
 
         return cte, epsi, speed_error
     
@@ -179,10 +151,9 @@ class MPCController:
 
         pred = pred[-1, :]
 
-        # deriv = vehicle_dynamics_st(x0_ST, u, self.p) # Manual integration
+        # deriv = vehicle_dynamics_st(x0_ST, u, self.p) # Manual integration; can be used instead of odeint for speed but subject to unstable solutions
         # pred = np.array(x0_ST) + np.array(deriv) * self.dt
 
-        #state = State(x=pred[-1, 0], y=pred[-1, 1], steering_angle=steering_angle, velocity=pred[-1, 3], yaw_angle=pred[-1, 4], yaw_rate=pred[-1, 5], slip_angle=pred[-1, 6])
         state = State(x=pred[0], y=pred[1], steering_angle=steering_angle, velocity=pred[3], yaw_angle=pred[4], yaw_rate=pred[5], slip_angle=pred[6])
         state.yaw_angle = self.normalize_angle(state.yaw_angle)
         state.slip_angle = self.normalize_angle(state.slip_angle)
@@ -202,19 +173,8 @@ class MPCController:
         #bounds are -1 to 1 for both steering and throttle
         bounds = np.array([(-1, 1)] * self.horizon * 2)
         assert len(initial_guess) == len(bounds), f"Initial guess shape {initial_guess.shape} does not match bounds shape {bounds.shape}"
-        self.log = False
         result = minimize(lambda x: self.mpc_cost_function(initial_state, x), initial_guess, bounds=bounds)
         optimal_control_inputs = result.x
-        #self.log = True
-        if self.log:
-            print("OPTIMAL HERE")
-            self.mpc_cost_function(initial_state, optimal_control_inputs)
-            #print("DUMMY HERE")
-            #self.mpc_cost_function(initial_state, [0,1]*self.horizon)
-            # with open("control_log.csv", "a") as f:
-            #     for i in range(len(optimal_control_inputs)//2):
-            #         f.write(f"{self.current_time}, {self.current_time+(i+1)*self.dt}, {optimal_control_inputs[2*i]}, {optimal_control_inputs[2*i+1]}\n")
-        self.log = False
         #return only the first control input
         self.last_predicted_actuation = optimal_control_inputs
         self.prev_x, self.prev_y, self.prev_yaw = initial_state.x, initial_state.y, initial_state.yaw_angle
