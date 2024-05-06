@@ -6,8 +6,8 @@ Please do not change anything else but fill out the to-do sections.
 from typing import List, Tuple, Dict, Optional
 import roar_py_interface
 import numpy as np
-from simple_pid import PID
-from pure_pursuit import PurePursuit
+from mpc import MPCController
+
 
 def normalize_rad(rad : float):
     return (rad + np.pi) % (2 * np.pi) - np.pi
@@ -22,7 +22,6 @@ def filter_waypoints(location : np.ndarray, current_idx: int, waypoints : List[r
             return i % len(waypoints)
     return current_idx
 
-
 class RoarCompetitionSolution:
     def __init__(
         self,
@@ -36,6 +35,8 @@ class RoarCompetitionSolution:
         collision_sensor : roar_py_interface.RoarPyCollisionSensor = None,
     ) -> None:
         self.maneuverable_waypoints = maneuverable_waypoints
+        self.ref_line = np.array([[waypoint.location[0], waypoint.location[1], waypoint.roll_pitch_yaw[2]] for i,waypoint in enumerate(maneuverable_waypoints)])
+        # self.ref_line = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
         self.vehicle = vehicle
         self.camera_sensor = camera_sensor
         self.location_sensor = location_sensor
@@ -43,19 +44,26 @@ class RoarCompetitionSolution:
         self.rpy_sensor = rpy_sensor
         self.occupancy_map_sensor = occupancy_map_sensor
         self.collision_sensor = collision_sensor
-        self.ref_line = np.genfromtxt('traj_race_cl_mintime.csv', delimiter=';', skip_header=3)
-        self.pid_longitudinal = PID(1, 0.1, 0.05, setpoint=0)
-        self.pid_longitudinal.output_limits = (-1, 1)
-
-        self.pure_pursuit = PurePursuit(np.array([waypoint.location for waypoint in self.maneuverable_waypoints]))
-
     
     async def initialize(self) -> None:
         # TODO: You can do some initial computation here if you want to.
         # For example, you can compute the path to the first waypoint.
 
+        self.MPC = MPCController(
+            dt=0.05,
+            horizon=10,
+            reference_trajectory=self.ref_line,
+            log=False
+        )
+        self.current_time = 0
+
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
+        vehicle_rotation = self.rpy_sensor.get_last_gym_observation()
+        vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
+
+        # self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw = vehicle_location[0], vehicle_location[1], vehicle_rotation[2]
+        # print("Initial x, y, yaw:", self.MPC.prev_x, self.MPC.prev_y, self.MPC.prev_yaw)
 
         self.current_waypoint_idx = 10
         self.current_waypoint_idx = filter_waypoints(
@@ -64,15 +72,10 @@ class RoarCompetitionSolution:
             self.maneuverable_waypoints
         )
 
-        self.pos_diff_speed = 0
-        self.neg_diff_speed = 0
-        self.count = 0
-        self.max_speed_reached = 0
-        self.speed_diff_at_max = 0
-
 
     async def step(
-        self
+        self,
+        current_time = None,
     ) -> None:
         """
         This function is called every world step.
@@ -80,6 +83,12 @@ class RoarCompetitionSolution:
         You can do whatever you want here, including apply_action() to the vehicle.
         """
         # TODO: Implement your solution here.
+        if current_time is not None:
+            self.current_time = current_time
+        else:
+            self.current_time += 0.05
+            current_time = self.current_time
+        print("Current time:", current_time)
 
         # Receive location, rotation and velocity data 
         vehicle_location = self.location_sensor.get_last_gym_observation()
@@ -87,26 +96,22 @@ class RoarCompetitionSolution:
         vehicle_velocity = self.velocity_sensor.get_last_gym_observation()
         vehicle_velocity_norm = np.linalg.norm(vehicle_velocity)
         
-        # Find the point closest to the vehicle on the reference trajectory
-        dists = np.linalg.norm(self.ref_line[:,1:3] - vehicle_location[:2], axis=1)
-        closest_idx = np.argmin(dists)
-
-        self.current_waypoint_idx = filter_waypoints(
-            vehicle_location,
-            self.current_waypoint_idx,
-            self.maneuverable_waypoints
-        )
-        
-        L = max(0.5, 0.8 * vehicle_velocity_norm)
-        goalpt, lastidx, steer_control = self.pure_pursuit.step(vehicle_location[:2], vehicle_rotation[2], L, self.current_waypoint_idx, vehicle_velocity_norm)
-       
-        self.pid_longitudinal.setpoint = self.ref_line[closest_idx][5] + 10
-        throttle_control = self.pid_longitudinal(vehicle_velocity_norm, dt=0.05)
-
+        state = [vehicle_location[0], vehicle_location[1], vehicle_rotation[2], vehicle_velocity_norm]
+        optimal_control = self.MPC.solve_mpc(state, current_time=current_time)
+        print("Optimal control:", optimal_control)
+        #print("Optimal control:", optimal_control)
+        # if self.MPC.log:
+        #     #in sim_log.csv, fill columns "time, x, y, yaw, speed, acceleration"
+        #     with open("sim_log.csv", "a") as f:
+        #         f.write(f"{current_time}, {state[0]}, {state[1]}, {state[2]}, {state[3]}, {optimal_control[0]}, {optimal_control[1]}\n")
+        assert optimal_control is not None
+        assert len(optimal_control) == 2
+        assert optimal_control[0] <= 1.0 and optimal_control[0] >= -1.0
+        assert optimal_control[1] <= 1.0 and optimal_control[1] >= -1.0
         control = {
-            "throttle": np.clip(throttle_control, 0.0, 1.0),
-            "steer": np.clip(steer_control, -1.0, 1.0),
-            "brake": np.clip(-throttle_control, 0.0, 1.0),
+            "throttle": np.clip(optimal_control[1], 0.0, 1.0),
+            "steer": np.clip(optimal_control[0], -1.0, 1.0),
+            "brake": np.clip(-optimal_control[1], 0.0, 1.0),
             "hand_brake": 0.0,
             "reverse": 0,
             "target_gear": 0
