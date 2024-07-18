@@ -1,5 +1,7 @@
 # ROAR_Competition
 
+This repo is a fork version of Vrigle's solution and is being improved by the WHS Roar team for the upcoming competition. 
+
 Submission code of the Laplace Racing Team for the ROAR competition. There's a [documentation](https://roar.gitbook.io/roar-competition-documentation/) accompanying this competition.
 
 The repositery includes two solutions: our main Pure Pursuit solution, as well as an MPC solution. The MPC solution is not optimized and only provided as a reference for future works.
